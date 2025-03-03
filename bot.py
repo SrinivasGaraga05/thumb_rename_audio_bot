@@ -1,11 +1,10 @@
 import os
 import json
-import asyncio
 import re
+import asyncio
 from pyrogram import Client, filters, idle
 from flask import Flask
 from threading import Thread
-import ffmpeg  # For modifying video without audio tracks
 
 # Load environment variables
 API_ID = int(os.getenv("API_ID", "0"))
@@ -18,7 +17,7 @@ if not API_ID or not API_HASH or not BOT_TOKEN:
     raise ValueError("❌ Missing API_ID, API_HASH, or BOT_TOKEN.")
 
 # Initialize Pyrogram Bot
-bot = Client("bulk_thumbnail_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+bot = Client("file_rename_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
 # Flask app for web hosting (keep the bot alive)
 web_app = Flask(__name__)
@@ -73,19 +72,29 @@ async def delete_thumbnail(client, message):
     else:
         await message.reply_text("⚠️ No thumbnail found to delete!")
 
-# Function to remove all audio tracks from video
-def remove_audio(input_file, output_file):
-    try:
-        # Remove all audio tracks using FFmpeg
-        ffmpeg.input(input_file).output(output_file, vcodec="copy", an=True).run(overwrite_output=True)
-        return output_file
-    except Exception as e:
-        print(f"❌ Error removing audio: {e}")
-        return None
+# ✅ Pause & Resume Bot
+bot_paused = False
 
-# ✅ File Rename & Thumbnail Change
+@bot.on_message(filters.command("pause"))
+async def pause_bot(client, message):
+    global bot_paused
+    bot_paused = True
+    await message.reply_text("⏸ Bot is **paused**. It will not process files until resumed.")
+
+@bot.on_message(filters.command("resume"))
+async def resume_bot(client, message):
+    global bot_paused
+    bot_paused = False
+    await message.reply_text("▶ Bot is **resumed**. Now processing files again.")
+
+# ✅ File Rename with Permanent Thumbnail
 @bot.on_message(filters.document)
-async def change_thumbnail(client, message):
+async def rename_file(client, message):
+    global bot_paused
+    if bot_paused:
+        await message.reply_text("⏸ Bot is **paused**. Use `/resume` to enable it.")
+        return
+
     thumb_db = load_thumb_db()
     thumb_path = thumb_db.get(str(message.from_user.id))  # Get user's saved thumbnail
 
@@ -126,31 +135,22 @@ async def change_thumbnail(client, message):
     # Ensure the filename starts with [Animes2u]
     new_filename = f"{DEFAULT_KEYWORD}{file_name}{file_ext}"
 
-    # Remove audio from the file
-    output_file_path = os.path.join(os.path.dirname(file_path), f"no_audio_{os.path.basename(file_path)}")
-    processed_file = remove_audio(file_path, output_file_path)
-
-    if not processed_file or not os.path.exists(processed_file):
-        await message.reply_text("❌ Failed to remove audio from the file.")
-        return
-
-    print(f"📤 Sending file: {processed_file}")
+    print(f"📤 Sending renamed file: {new_filename}")
 
     try:
-        # Send renamed file with thumbnail
+        # Send renamed file with permanent thumbnail
         await client.send_document(
             chat_id=message.chat.id,
-            document=processed_file,
+            document=file_path,
             thumb=thumb_path,
             file_name=new_filename,
             caption=f"✅ Renamed: {new_filename}",
             mime_type=message.document.mime_type,
         )
-        await message.reply_text("✅ Done! Here is your updated file (Audio Removed).")
+        await message.reply_text("✅ Done! Here is your updated file.")
 
         # ✅ Delete temp files to free space
         os.remove(file_path)
-        os.remove(processed_file)
 
     except Exception as e:
         await message.reply_text(f"❌ Error sending file: {e}")
@@ -160,9 +160,12 @@ async def change_thumbnail(client, message):
 @bot.on_message(filters.command("start"))
 async def start(client, message):
     await message.reply_text(
-        "👋 Hello! Send an image with `/set_thumb` to set a **permanent thumbnail**.\n"
-        "Send a file to rename it, change its thumbnail, and remove its audio.\n"
-        "Use `/del_thumb` to **delete your thumbnail**."
+        "👋 Hello! This bot renames your files and applies a **permanent thumbnail**.\n\n"
+        "✅ Use `/set_thumb` to **set a permanent thumbnail**.\n"
+        "❌ Use `/del_thumb` to **delete your thumbnail**.\n"
+        "⏸ Use `/pause` to **pause the bot**.\n"
+        "▶ Use `/resume` to **resume the bot**.\n"
+        "📂 Send a file, and it will be renamed and sent back with your thumbnail!"
     )
 
 # Run Flask in a separate thread
