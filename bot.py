@@ -4,6 +4,7 @@ import re
 from pyrogram import Client, filters, idle
 from flask import Flask
 from threading import Thread
+import ffmpeg  # Import ffmpeg for audio track modification
 
 # Load environment variables
 API_ID = int(os.getenv("API_ID", "0"))
@@ -29,39 +30,33 @@ def home():
 THUMB_DIR = "thumbnails"
 os.makedirs(THUMB_DIR, exist_ok=True)
 
-# Dictionary to track paused users
-paused_users = set()
-
 # ✅ Set Thumbnail Command
 @bot.on_message(filters.command("set_thumb") & filters.photo)
 async def set_thumbnail(client, message):
     file_path = os.path.join(THUMB_DIR, f"{message.from_user.id}.jpg")
     await client.download_media(message, file_name=file_path)
-    await message.reply_text("✅ Thumbnail saved permanently! Use /del_thumb to remove it.")
+    await message.reply_text("✅ Thumbnail saved successfully!")
 
-# ✅ Delete Thumbnail Command
-@bot.on_message(filters.command("del_thumb"))
-async def delete_thumbnail(client, message):
-    file_path = os.path.join(THUMB_DIR, f"{message.from_user.id}.jpg")
-    if os.path.exists(file_path):
-        os.remove(file_path)
-        await message.reply_text("✅ Thumbnail deleted!")
-    else:
-        await message.reply_text("⚠️ No thumbnail found!")
+# Function to modify audio track names
+def modify_audio_tracks(input_file, output_file):
+    try:
+        probe = ffmpeg.probe(input_file)
+        streams = [s for s in probe['streams'] if s['codec_type'] == 'audio']
 
-# ✅ Stop Processing Command
-@bot.on_message(filters.command("stop"))
-async def stop_processing(client, message):
-    paused_users.add(message.from_user.id)
-    await message.reply_text("⏸️ File processing paused! Use /start to resume.")
+        # Build ffmpeg command to rename audio tracks
+        ffmpeg_cmd = ffmpeg.input(input_file)
+        for i, stream in enumerate(streams):
+            ffmpeg_cmd = ffmpeg_cmd.output(output_file, map=f"0:a:{i}", metadata=f"title={DEFAULT_KEYWORD}")
+        
+        ffmpeg_cmd.run(overwrite_output=True)
+        return output_file
+    except Exception as e:
+        print(f"Error modifying audio tracks: {e}")
+        return None
 
 # ✅ File Rename & Thumbnail Change
 @bot.on_message(filters.document)
 async def change_thumbnail(client, message):
-    if message.from_user.id in paused_users:
-        await message.reply_text("⏸️ File processing is paused! Use /start to resume.")
-        return
-
     thumb_path = os.path.join(THUMB_DIR, f"{message.from_user.id}.jpg")
 
     # Check if thumbnail exists
@@ -93,8 +88,8 @@ async def change_thumbnail(client, message):
 
     file_name, file_ext = os.path.splitext(message.document.file_name)
 
-    # Remove anything inside brackets [ ]
-    file_name = re.sub(r"\[.*?\]", "", file_name)
+    # Keep [E10], [720p], etc., but remove other brackets
+    file_name = re.sub(r"\[(?!\d+p|E\d+).*?\]", "", file_name)
 
     # Remove any word starting with '@'
     file_name = re.sub(r"@\S+", "", file_name)
@@ -102,14 +97,22 @@ async def change_thumbnail(client, message):
     # Trim extra spaces
     file_name = file_name.strip()
 
-    # Ensure the filename starts with [@Animes2u]
+    # Ensure the filename starts with [Animes2u]
     new_filename = f"{DEFAULT_KEYWORD}{file_name}{file_ext}"
+
+    # Modify audio track names
+    modified_file_path = f"modified_{file_path}"
+    modified_file = modify_audio_tracks(file_path, modified_file_path)
+    
+    if not modified_file:
+        await message.reply_text("❌ Failed to modify audio tracks.")
+        return
 
     try:
         # Send renamed file with thumbnail
         await client.send_document(
             chat_id=message.chat.id,
-            document=file_path,
+            document=modified_file,
             thumb=thumb_path,
             file_name=new_filename,
             caption=f"✅ Renamed: {new_filename}",
@@ -117,8 +120,9 @@ async def change_thumbnail(client, message):
         )
         await message.reply_text("✅ Done! Here is your updated file.")
 
-        # ✅ Delete temp file to free space
+        # ✅ Delete temp files to free space
         os.remove(file_path)
+        os.remove(modified_file)
 
     except Exception as e:
         await message.reply_text(f"❌ Error: {e}")
@@ -126,13 +130,9 @@ async def change_thumbnail(client, message):
 # ✅ Start Command
 @bot.on_message(filters.command("start"))
 async def start(client, message):
-    if message.from_user.id in paused_users:
-        paused_users.remove(message.from_user.id)
-        await message.reply_text("▶️ File processing resumed!")
-    else:
-        await message.reply_text(
-            "👋 Hello! Send an image with /set_thumb to set a thumbnail, then send a file to rename & change its thumbnail."
-        )
+    await message.reply_text(
+        "👋 Hello! Send an image with /set_thumb to set a thumbnail, then send a file to rename, change its thumbnail, and update audio tracks."
+    )
 
 # Run Flask in a separate thread
 def run_flask():
