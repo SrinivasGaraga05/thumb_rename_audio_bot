@@ -29,16 +29,39 @@ def home():
 THUMB_DIR = "thumbnails"
 os.makedirs(THUMB_DIR, exist_ok=True)
 
+# Dictionary to track paused users
+paused_users = set()
+
 # ✅ Set Thumbnail Command
 @bot.on_message(filters.command("set_thumb") & filters.photo)
 async def set_thumbnail(client, message):
     file_path = os.path.join(THUMB_DIR, f"{message.from_user.id}.jpg")
     await client.download_media(message, file_name=file_path)
-    await message.reply_text("✅ Thumbnail saved successfully!")
+    await message.reply_text("✅ Thumbnail saved permanently! Use /del_thumb to remove it.")
+
+# ✅ Delete Thumbnail Command
+@bot.on_message(filters.command("del_thumb"))
+async def delete_thumbnail(client, message):
+    file_path = os.path.join(THUMB_DIR, f"{message.from_user.id}.jpg")
+    if os.path.exists(file_path):
+        os.remove(file_path)
+        await message.reply_text("✅ Thumbnail deleted!")
+    else:
+        await message.reply_text("⚠️ No thumbnail found!")
+
+# ✅ Stop Processing Command
+@bot.on_message(filters.command("stop"))
+async def stop_processing(client, message):
+    paused_users.add(message.from_user.id)
+    await message.reply_text("⏸️ File processing paused! Use /start to resume.")
 
 # ✅ File Rename & Thumbnail Change
 @bot.on_message(filters.document)
 async def change_thumbnail(client, message):
+    if message.from_user.id in paused_users:
+        await message.reply_text("⏸️ File processing is paused! Use /start to resume.")
+        return
+
     thumb_path = os.path.join(THUMB_DIR, f"{message.from_user.id}.jpg")
 
     # Check if thumbnail exists
@@ -103,9 +126,13 @@ async def change_thumbnail(client, message):
 # ✅ Start Command
 @bot.on_message(filters.command("start"))
 async def start(client, message):
-    await message.reply_text(
-        "👋 Hello! Send an image with /set_thumb to set a thumbnail, then send a file to rename & change its thumbnail."
-    )
+    if message.from_user.id in paused_users:
+        paused_users.remove(message.from_user.id)
+        await message.reply_text("▶️ File processing resumed!")
+    else:
+        await message.reply_text(
+            "👋 Hello! Send an image with /set_thumb to set a thumbnail, then send a file to rename & change its thumbnail."
+        )
 
 # Run Flask in a separate thread
 def run_flask():
