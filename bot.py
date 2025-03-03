@@ -1,7 +1,6 @@
 import os
 import asyncio
 import re
-import subprocess
 from pyrogram import Client, filters, idle
 from flask import Flask
 from threading import Thread
@@ -10,6 +9,7 @@ from threading import Thread
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+OWNER_ID = int(os.getenv("OWNER_ID", "0"))  # Replace with your Telegram User ID
 DEFAULT_KEYWORD = "[@Animes2u] "
 
 # Ensure required environment variables are set
@@ -30,42 +30,49 @@ def home():
 THUMB_DIR = "thumbnails"
 os.makedirs(THUMB_DIR, exist_ok=True)
 
-# ✅ Set Thumbnail Command
+# Variable to track bot status
+processing_enabled = True
+
+# ✅ Set Thumbnail Command (Permanent Until Deleted)
 @bot.on_message(filters.command("set_thumb") & filters.photo)
 async def set_thumbnail(client, message):
+    """Saves a user's thumbnail permanently until they delete it."""
     file_path = os.path.join(THUMB_DIR, f"{message.from_user.id}.jpg")
+    
+    # Download the new thumbnail
     await client.download_media(message.photo, file_name=file_path)
-    await message.reply_text("✅ Thumbnail saved successfully!")
+    await message.reply_text("✅ Thumbnail saved permanently! Use /delete_thumb to remove it.")
 
-# ✅ Function to Rename Audio Track Inside Video File
-def rename_audio_track(video_path, output_path):
-    """
-    Uses FFmpeg to rename the audio track inside a video file.
-    """
-    command = [
-        "ffmpeg", "-i", video_path,
-        "-map", "0", "-c", "copy",
-        "-metadata:s:a:0", "title=[@Animes2u]",  # Set audio track name
-        output_path
-    ]
+# ✅ Delete Thumbnail Command
+@bot.on_message(filters.command("delete_thumb"))
+async def delete_thumbnail(client, message):
+    """Deletes the user's saved thumbnail."""
+    file_path = os.path.join(THUMB_DIR, f"{message.from_user.id}.jpg")
 
-    result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
-    if result.returncode == 0:
-        return True
+    if os.path.exists(file_path):
+        os.remove(file_path)
+        await message.reply_text("🗑️ Thumbnail deleted successfully!")
     else:
-        print(f"FFmpeg Error: {result.stderr}")
-        return False
+        await message.reply_text("⚠️ No saved thumbnail found!")
 
-# ✅ File Rename & Audio Track Update
+# ✅ File Rename & Apply Thumbnail
 @bot.on_message(filters.document)
 async def change_thumbnail(client, message):
+    """Changes a file's thumbnail and renames it."""
+    global processing_enabled
+
+    if not processing_enabled:
+        await message.reply_text("⏸️ Bot is currently stopped. Use /start to resume processing.")
+        return
+
     thumb_path = os.path.join(THUMB_DIR, f"{message.from_user.id}.jpg")
 
+    # Check if a thumbnail exists
     if not os.path.exists(thumb_path):
         await message.reply_text("⚠️ No thumbnail found! Use /set_thumb to set one.")
         return
 
+    # Check file size (max 2GB limit for normal users)
     file_size = message.document.file_size
     max_size = 2 * 1024 * 1024 * 1024  # 2GB
 
@@ -75,52 +82,66 @@ async def change_thumbnail(client, message):
 
     await message.reply_text("🔄 Processing file...")
 
+    # Download the document
     file_path = await client.download_media(message)
 
     if not file_path:
         await message.reply_text("❌ Failed to download file.")
         return
 
+    # Extract filename & extension
     file_name, file_ext = os.path.splitext(message.document.file_name)
-    file_name = re.sub(r"\[.*?\]", "", file_name)
+
+    # Preserve valid brackets like [720p], [1080p], [e20], [Final Season]
+    valid_brackets = re.findall(r"\[[\w\s\d]+\]", file_name)
+
+    # Remove unwanted tags inside brackets (e.g., [ars], [xyz])
+    file_name = re.sub(r"\[[^\d\s]+\]", "", file_name)
+
+    # Remove any word starting with '@'
     file_name = re.sub(r"@\S+", "", file_name)
+
+    # Trim extra spaces
     file_name = file_name.strip()
 
+    # Reattach valid brackets at the end
+    file_name += " " + " ".join(valid_brackets)
+
+    # Ensure filename starts with [@Animes2u]
     new_filename = f"{DEFAULT_KEYWORD}{file_name}{file_ext}"
-    new_file_path = os.path.join(os.path.dirname(file_path), new_filename)
-
-    os.rename(file_path, new_file_path)
-
-    # ✅ Change Audio Track Name Inside Video (If Video Format)
-    if file_ext.lower() in [".mkv", ".mp4", ".avi"]:
-        modified_video_path = os.path.join(os.path.dirname(file_path), f"modified_{new_filename}")
-        success = rename_audio_track(new_file_path, modified_video_path)
-
-        if success:
-            os.remove(new_file_path)  # Remove old file
-            new_file_path = modified_video_path  # Use the modified file
 
     try:
+        # Send renamed file with thumbnail
         await client.send_document(
             chat_id=message.chat.id,
-            document=new_file_path,
+            document=file_path,
             thumb=thumb_path,
             file_name=new_filename,
-            caption=f"✅ Renamed: {new_filename} (Audio Track Updated)",
+            caption=f"✅ Renamed: {new_filename}",
         )
-        await message.reply_text("✅ Done! Here is your updated file with the renamed audio track.")
+        await message.reply_text("✅ Done! Here is your updated file.")
 
-        os.remove(new_file_path)
+        # ✅ Delete temp file to free space
+        os.remove(file_path)
 
     except Exception as e:
         await message.reply_text(f"❌ Error: {e}")
 
-# ✅ Start Command
+# ✅ Start Command (Resumes Processing)
 @bot.on_message(filters.command("start"))
-async def start(client, message):
-    await message.reply_text(
-        "👋 Hello! Send an image with /set_thumb to set a thumbnail, then send a file to rename & change its thumbnail."
-    )
+async def start_processing(client, message):
+    """Resumes file processing."""
+    global processing_enabled
+    processing_enabled = True
+    await message.reply_text("▶️ Bot is now active and processing files!")
+
+# ✅ Stop Command (Pauses Processing - Owner Only)
+@bot.on_message(filters.command("stop") & filters.user(OWNER_ID))
+async def stop_processing(client, message):
+    """Pauses file processing (Admin Only)."""
+    global processing_enabled
+    processing_enabled = False
+    await message.reply_text("⏸️ Bot has stopped processing files. Use /start to resume.")
 
 # Run Flask in a separate thread
 def run_flask():
