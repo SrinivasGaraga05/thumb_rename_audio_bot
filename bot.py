@@ -1,6 +1,8 @@
 import os
 import asyncio
 import re
+import time
+import requests
 from pyrogram import Client, filters, idle
 from flask import Flask
 from threading import Thread
@@ -13,7 +15,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 DEFAULT_KEYWORD = "[@Animes2u] "
 
 # Ensure required environment variables are set
-if not API_ID or not API_HASH or not BOT_TOKEN:
+if API_ID == 0 or not API_HASH or not BOT_TOKEN:
     raise ValueError("❌ Missing API_ID, API_HASH, or BOT_TOKEN.")
 
 # Initialize Pyrogram Bot
@@ -37,21 +39,13 @@ async def set_thumbnail(client, message):
     await client.download_media(message, file_name=file_path)
     await message.reply_text("✅ Thumbnail saved successfully!")
 
-# Function to modify audio track names
+# ✅ Function to Modify Audio Track Metadata
 def modify_audio_tracks(input_file, output_file):
     try:
-        probe = ffmpeg.probe(input_file)
-        streams = [s for s in probe['streams'] if s['codec_type'] == 'audio']
-
-        # FFmpeg command: Keep video and modify audio track metadata
-        ffmpeg_cmd = ffmpeg.input(input_file)
-        ffmpeg_cmd = ffmpeg_cmd.output(output_file, codec="copy", map="0", metadata=f"title={DEFAULT_KEYWORD}")
-
-        # Run FFmpeg
-        ffmpeg_cmd.run(overwrite_output=True)
+        ffmpeg.input(input_file).output(output_file, codec="copy", map="0", metadata=f"title={DEFAULT_KEYWORD}").run(overwrite_output=True)
         return output_file
     except Exception as e:
-        print(f"Error modifying audio tracks: {e}")
+        print(f"❌ Error modifying audio tracks: {e}")
         return None
 
 # ✅ File Rename & Thumbnail Change
@@ -65,9 +59,7 @@ async def change_thumbnail(client, message):
         return
 
     # Check file size (max 2GB)
-    file_size = message.document.file_size
-    max_size = 2 * 1024 * 1024 * 1024  # 2GB
-    if file_size > max_size:
+    if message.document.file_size > 2 * 1024 * 1024 * 1024:
         await message.reply_text("❌ File is too large (Max: 2GB).")
         return
 
@@ -81,22 +73,14 @@ async def change_thumbnail(client, message):
 
     print(f"📥 Downloaded file: {file_path}")
 
-    # Extract filename & clean it
+    # ✅ Extract & Clean Filename
     file_name, file_ext = os.path.splitext(message.document.file_name)
-
-    # Keep [E10], [720p], etc., but remove other brackets
-    file_name = re.sub(r"\[(?!\d+p|E\d+).*?\]", "", file_name)
-
-    # Remove any word starting with '@'
-    file_name = re.sub(r"@\S+", "", file_name)
-
-    # Trim extra spaces
+    file_name = re.sub(r"\[(?!\d+p|E\d+).*?\]", "", file_name)  # Keep [E10], [720p], etc.
+    file_name = re.sub(r"@\S+", "", file_name)  # Remove words starting with '@'
     file_name = file_name.strip()
-
-    # Ensure the filename starts with [Animes2u]
     new_filename = f"{DEFAULT_KEYWORD}{file_name}{file_ext}"
 
-    # Modify audio track names
+    # ✅ Modify Audio Tracks
     modified_file_path = os.path.join(os.path.dirname(file_path), f"modified_{os.path.basename(file_path)}")
     modified_file = modify_audio_tracks(file_path, modified_file_path)
 
@@ -106,19 +90,19 @@ async def change_thumbnail(client, message):
 
     print(f"📤 Sending file: {modified_file}")
 
+    # ✅ Send Renamed File with Thumbnail
     try:
-        # Send renamed file with thumbnail
         await client.send_document(
             chat_id=message.chat.id,
             document=modified_file,
-            thumb=thumb_path,
+            thumb=thumb_path if os.path.exists(thumb_path) else None,
             file_name=new_filename,
             caption=f"✅ Renamed: {new_filename}",
             mime_type=message.document.mime_type,
         )
         await message.reply_text("✅ Done! Here is your updated file.")
 
-        # ✅ Delete temp files to free space
+        # ✅ Delete Temporary Files
         os.remove(file_path)
         os.remove(modified_file)
 
@@ -133,7 +117,17 @@ async def start(client, message):
         "👋 Hello! Send an image with /set_thumb to set a thumbnail, then send a file to rename, change its thumbnail, and update audio tracks."
     )
 
-# Run Flask in a separate thread
+# ✅ Flask Keep-Alive Ping
+def keep_alive():
+    while True:
+        try:
+            requests.get("https://your-app-url.com/")  # Replace with actual URL
+            print("✅ Flask Pinged!")
+        except:
+            print("⚠️ Flask Ping Failed!")
+        time.sleep(600)  # Ping every 10 minutes
+
+# ✅ Run Flask Server
 def run_flask():
     try:
         port = int(os.environ.get("PORT", 8080))
@@ -142,22 +136,25 @@ def run_flask():
     except Exception as e:
         print(f"⚠️ Flask server error: {e}")
 
+# ✅ Main Execution
 if __name__ == "__main__":
     print("🤖 Bot is starting...")
 
-    # Start Flask server
-    flask_thread = Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-
-    # Start Telegram Bot
     try:
+        # Start Flask Server & Keep-Alive
+        Thread(target=run_flask, daemon=True).start()
+        Thread(target=keep_alive, daemon=True).start()
+
+        # Start Telegram Bot
         bot.start()
         print("✅ Bot is online.")
+
+        # Keep Bot Running
+        idle()
+
     except Exception as e:
-        print(f"❌ Bot startup failed: {e}")
+        print(f"❌ Critical error: {e}")
 
-    # Keep bot running
-    idle()
-
-    print("🛑 Bot stopped.")
-    bot.stop()
+    finally:
+        print("🛑 Bot stopped.")
+        bot.stop()
