@@ -3,3 +3,4 @@ tgcrypto
 flask
 ffmpeg-python
 python-dotenv
+requests
