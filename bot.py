@@ -105,4 +105,5 @@ async def change_thumbnail(client, message):
             document=modified_file,
             thumb=thumb_path if os.path.exists(thumb_path) else None,
             file_name=new_filename,
-            caption=f"✅ Renamed: {new_filename}
+            caption=f"✅ Renamed: {new_filename}"
+
