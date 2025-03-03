@@ -1,9 +1,10 @@
 import os
+import asyncio
 import re
-import ffmpeg
 from pyrogram import Client, filters, idle
 from flask import Flask
 from threading import Thread
+import ffmpeg  # For modifying audio track metadata
 
 # Load environment variables
 API_ID = int(os.getenv("API_ID", "0"))
@@ -18,7 +19,7 @@ if not API_ID or not API_HASH or not BOT_TOKEN:
 # Initialize Pyrogram Bot
 bot = Client("bulk_thumbnail_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# Flask app for web hosting (keep bot alive)
+# Flask app for web hosting (keep the bot alive)
 web_app = Flask(__name__)
 
 @web_app.route('/')
@@ -36,14 +37,23 @@ async def set_thumbnail(client, message):
     await client.download_media(message, file_name=file_path)
     await message.reply_text("✅ Thumbnail saved successfully!")
 
-# Function to modify audio track names
+# Function to modify audio track metadata
 def modify_audio_tracks(input_file, output_file):
     try:
-        print(f"🔄 Modifying audio track: {input_file} ➡️ {output_file}")
-        ffmpeg.input(input_file).output(output_file, codec="copy", map="0", metadata="title=[@Animes2u]").run(overwrite_output=True)
-        return output_file if os.path.exists(output_file) else None
+        probe = ffmpeg.probe(input_file)
+        streams = [s for s in probe['streams'] if s['codec_type'] == 'audio']
+
+        # FFmpeg command: Keep video and modify audio track metadata
+        ffmpeg_cmd = ffmpeg.input(input_file)
+        for i, stream in enumerate(streams):
+            track_name = f"Audio Track {i + 1} - {DEFAULT_KEYWORD}"  
+            ffmpeg_cmd = ffmpeg_cmd.output(output_file, codec="copy", map="0", metadata=f"title={track_name}")
+
+        # Run FFmpeg
+        ffmpeg_cmd.run(overwrite_output=True)
+        return output_file
     except Exception as e:
-        print(f"❌ FFmpeg Error: {e}")
+        print(f"Error modifying audio tracks: {e}")
         return None
 
 # ✅ File Rename & Thumbnail Change
@@ -88,7 +98,7 @@ async def change_thumbnail(client, message):
     # Ensure the filename starts with [Animes2u]
     new_filename = f"{DEFAULT_KEYWORD}{file_name}{file_ext}"
 
-    # Modify audio track names
+    # Modify audio track metadata
     modified_file_path = os.path.join(os.path.dirname(file_path), f"modified_{os.path.basename(file_path)}")
     modified_file = modify_audio_tracks(file_path, modified_file_path)
 
@@ -105,5 +115,51 @@ async def change_thumbnail(client, message):
             document=modified_file,
             thumb=thumb_path if os.path.exists(thumb_path) else None,
             file_name=new_filename,
-            caption=f"✅ Renamed: {new_filename}"
+            caption=f"✅ Renamed: {new_filename}",
+            mime_type=message.document.mime_type,
+        )
+        await message.reply_text("✅ Done! Here is your updated file.")
 
+        # ✅ Delete temp files to free space
+        os.remove(file_path)
+        os.remove(modified_file)
+
+    except Exception as e:
+        await message.reply_text(f"❌ Error sending file: {e}")
+        print(f"❌ Error sending file: {e}")
+
+# ✅ Start Command
+@bot.on_message(filters.command("start"))
+async def start(client, message):
+    await message.reply_text(
+        "👋 Hello! Send an image with /set_thumb to set a thumbnail, then send a file to rename, change its thumbnail, and update audio tracks."
+    )
+
+# Run Flask in a separate thread
+def run_flask():
+    try:
+        port = int(os.environ.get("PORT", 8080))
+        print(f"🌍 Starting Flask on port {port}...")
+        web_app.run(host="0.0.0.0", port=port)
+    except Exception as e:
+        print(f"⚠️ Flask server error: {e}")
+
+if __name__ == "__main__":
+    print("🤖 Bot is starting...")
+
+    # Start Flask server
+    flask_thread = Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+
+    # Start Telegram Bot
+    try:
+        bot.start()
+        print("✅ Bot is online.")
+    except Exception as e:
+        print(f"❌ Bot startup failed: {e}")
+
+    # Keep bot running
+    idle()
+
+    print("🛑 Bot stopped.")
+    bot.stop()
