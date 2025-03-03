@@ -62,4 +62,112 @@ async def stop_processing(client, message):
 async def start_processing(client, message):
     global processing_enabled
     processing_enabled = True
-    awa
+    await message.reply_text("▶️ Bot has resumed processing files. Send a file to rename & change its thumbnail.")
+
+# ✅ File Rename & Audio Track Name Change
+@bot.on_message(filters.document)
+async def change_thumbnail(client, message):
+    global processing_enabled
+
+    if not processing_enabled:
+        await message.reply_text("⏸️ Bot is currently stopped. Use /start to resume processing.")
+        return
+
+    thumb_path = os.path.join(THUMB_DIR, f"{message.from_user.id}.jpg")
+
+    # Check if a thumbnail exists
+    if not os.path.exists(thumb_path):
+        await message.reply_text("⚠️ No thumbnail found! Use /set_thumb to set one.")
+        return
+
+    # Check file size (max 2GB limit)
+    file_size = message.document.file_size
+    max_size = 2 * 1024 * 1024 * 1024  # 2GB
+
+    if file_size > max_size:
+        await message.reply_text("❌ File is too large (Max: 2GB).")
+        return
+
+    await message.reply_text("🔄 Processing file...")
+
+    # Download the document
+    file_path = await client.download_media(message)
+
+    if not file_path:
+        await message.reply_text("❌ Failed to download file.")
+        return
+
+    # Extract filename & extension
+    file_name, file_ext = os.path.splitext(message.document.file_name)
+
+    # Preserve valid brackets like [720p], [1080p], [e20], [Final Season]
+    valid_brackets = re.findall(r"\[[\w\s\d]+\]", file_name)
+
+    # Remove unwanted tags inside brackets (e.g., [ars], [xyz])
+    file_name = re.sub(r"\[[^\d\s]+\]", "", file_name)
+
+    # Remove any word starting with '@'
+    file_name = re.sub(r"@\S+", "", file_name)
+
+    # Trim extra spaces
+    file_name = file_name.strip()
+
+    # Reattach valid brackets at the end
+    file_name += " " + " ".join(valid_brackets)
+
+    # Ensure filename starts with [@Animes2u]
+    new_filename = f"{DEFAULT_KEYWORD}{file_name}{file_ext}"
+    new_file_path = f"processed_{file_name}{file_ext}"
+
+    try:
+        # 🔹 Change Audio Track Name Using FFmpeg
+        (
+            ffmpeg
+            .input(file_path)
+            .output(new_file_path, map='0', metadata='title=[@Animes2u] Audio')
+            .run(overwrite_output=True)
+        )
+
+        # Send processed file with new audio track name
+        await client.send_document(
+            chat_id=message.chat.id,
+            document=new_file_path,
+            thumb=thumb_path,
+            file_name=new_filename,
+            caption=f"✅ Renamed: {new_filename} (Audio Track Name Updated)",
+        )
+
+        await message.reply_text("✅ Done! Audio track name has been updated.")
+
+        # ✅ Delete temp files
+        os.remove(file_path)
+        os.remove(new_file_path)
+
+    except Exception as e:
+        await message.reply_text(f"❌ Error: {e}")
+
+# Run Flask in a separate thread
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    print(f"🌍 Starting Flask on port {port}...")
+    web_app.run(host="0.0.0.0", port=port)
+
+if __name__ == "__main__":
+    print("🤖 Bot is starting...")
+
+    # Start Flask server
+    flask_thread = Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+
+    # Start Telegram Bot
+    try:
+        bot.start()
+        print("✅ Bot is online.")
+    except Exception as e:
+        print(f"❌ Bot startup failed: {e}")
+
+    # Keep bot running
+    idle()
+
+    print("🛑 Bot stopped.")
+    bot.stop()
