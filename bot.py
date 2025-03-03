@@ -4,7 +4,7 @@ import re
 from pyrogram import Client, filters, idle
 from flask import Flask
 from threading import Thread
-import ffmpeg  # Import ffmpeg for audio track modification
+import ffmpeg  # For audio track modification
 
 # Load environment variables
 API_ID = int(os.getenv("API_ID", "0"))
@@ -43,11 +43,11 @@ def modify_audio_tracks(input_file, output_file):
         probe = ffmpeg.probe(input_file)
         streams = [s for s in probe['streams'] if s['codec_type'] == 'audio']
 
-        # Build ffmpeg command to rename audio tracks
+        # Build ffmpeg command to rename audio tracks while keeping the full file
         ffmpeg_cmd = ffmpeg.input(input_file)
         for i, stream in enumerate(streams):
-            ffmpeg_cmd = ffmpeg_cmd.output(output_file, map=f"0:a:{i}", metadata=f"title={DEFAULT_KEYWORD}")
-        
+            ffmpeg_cmd = ffmpeg_cmd.output(output_file, codec="copy", map="0", metadata=f"title={DEFAULT_KEYWORD}")
+
         ffmpeg_cmd.run(overwrite_output=True)
         return output_file
     except Exception as e:
@@ -101,10 +101,10 @@ async def change_thumbnail(client, message):
     new_filename = f"{DEFAULT_KEYWORD}{file_name}{file_ext}"
 
     # Modify audio track names
-    modified_file_path = f"modified_{file_path}"
+    modified_file_path = f"modified_{os.path.basename(file_path)}"
     modified_file = modify_audio_tracks(file_path, modified_file_path)
     
-    if not modified_file:
+    if not modified_file or not os.path.exists(modified_file):
         await message.reply_text("❌ Failed to modify audio tracks.")
         return
 
