@@ -16,15 +16,15 @@ DEFAULT_KEYWORD = "[@Animes2u] "
 if not API_ID or not API_HASH or not BOT_TOKEN:
     raise ValueError("❌ Missing API_ID, API_HASH, or BOT_TOKEN.")
 
-# Initialize Pyrogram Bot
+# Initialize Pyrogram Bot (✅ No user restrictions)
 bot = Client("bulk_thumbnail_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# Flask app for web hosting (keep the bot alive)
+# Flask app for web hosting (public access)
 web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "🤖 Bot is running!"
+    return "🤖 Bot is running for everyone!"
 
 # Directory for storing user thumbnails
 THUMB_DIR = "thumbnails"
@@ -33,14 +33,14 @@ os.makedirs(THUMB_DIR, exist_ok=True)
 # Global variable to enable/disable processing
 processing_enabled = True
 
-# ✅ Set Thumbnail Command (Thumbnail remains permanent)
+# ✅ Set Thumbnail (Public Use)
 @bot.on_message(filters.command("set_thumb") & filters.photo)
 async def set_thumbnail(client, message):
     file_path = os.path.join(THUMB_DIR, f"{message.from_user.id}.jpg")
     await client.download_media(message.photo, file_name=file_path)
     await message.reply_text("✅ Thumbnail saved permanently! Use /delete_thumb to remove it.")
 
-# ✅ Delete Thumbnail Command
+# ✅ Delete Thumbnail
 @bot.on_message(filters.command("delete_thumb"))
 async def delete_thumbnail(client, message):
     file_path = os.path.join(THUMB_DIR, f"{message.from_user.id}.jpg")
@@ -50,21 +50,21 @@ async def delete_thumbnail(client, message):
     else:
         await message.reply_text("⚠️ No saved thumbnail found!")
 
-# ✅ Stop Processing Command (Bot stays online but ignores file processing)
+# ✅ Stop Processing
 @bot.on_message(filters.command("stop"))
 async def stop_processing(client, message):
     global processing_enabled
     processing_enabled = False
     await message.reply_text("⏸️ Bot has stopped processing files. Use /start to resume.")
 
-# ✅ Start Processing Command
+# ✅ Resume Processing
 @bot.on_message(filters.command("start"))
 async def start_processing(client, message):
     global processing_enabled
     processing_enabled = True
     await message.reply_text("▶️ Bot has resumed processing files. Send a file to rename & change its thumbnail.")
 
-# ✅ File Rename & Audio Track Name Change
+# ✅ Process File for All Users
 @bot.on_message(filters.document)
 async def change_thumbnail(client, message):
     global processing_enabled
@@ -80,7 +80,7 @@ async def change_thumbnail(client, message):
         await message.reply_text("⚠️ No thumbnail found! Use /set_thumb to set one.")
         return
 
-    # Check file size (max 2GB limit)
+    # Check file size (max 2GB)
     file_size = message.document.file_size
     max_size = 2 * 1024 * 1024 * 1024  # 2GB
 
@@ -100,10 +100,10 @@ async def change_thumbnail(client, message):
     # Extract filename & extension
     file_name, file_ext = os.path.splitext(message.document.file_name)
 
-    # Preserve valid brackets like [720p], [1080p], [e20], [Final Season]
+    # Preserve valid brackets like [720p], [e20]
     valid_brackets = re.findall(r"\[[\w\s\d]+\]", file_name)
 
-    # Remove unwanted tags inside brackets (e.g., [ars], [xyz])
+    # Remove unwanted tags inside brackets (e.g., [xyz])
     file_name = re.sub(r"\[[^\d\s]+\]", "", file_name)
 
     # Remove any word starting with '@'
@@ -112,7 +112,7 @@ async def change_thumbnail(client, message):
     # Trim extra spaces
     file_name = file_name.strip()
 
-    # Reattach valid brackets at the end
+    # Reattach valid brackets
     file_name += " " + " ".join(valid_brackets)
 
     # Ensure filename starts with [@Animes2u]
@@ -128,16 +128,16 @@ async def change_thumbnail(client, message):
             .run(overwrite_output=True)
         )
 
-        # Send processed file with new audio track name
+        # Send processed file
         await client.send_document(
             chat_id=message.chat.id,
             document=new_file_path,
             thumb=thumb_path,
             file_name=new_filename,
-            caption=f"✅ Renamed: {new_filename} (Audio Track Name Updated)",
+            caption=f"✅ Renamed: {new_filename} (Audio Track Updated)",
         )
 
-        await message.reply_text("✅ Done! Audio track name has been updated.")
+        await message.reply_text("✅ Done! Audio track name updated.")
 
         # ✅ Delete temp files
         os.remove(file_path)
@@ -146,23 +146,23 @@ async def change_thumbnail(client, message):
     except Exception as e:
         await message.reply_text(f"❌ Error: {e}")
 
-# Run Flask in a separate thread
+# Run Flask for public access
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
-    print(f"🌍 Starting Flask on port {port}...")
+    print(f"🌍 Public Bot Running on Port {port}...")
     web_app.run(host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
-    print("🤖 Bot is starting...")
+    print("🤖 Public Bot is starting...")
 
     # Start Flask server
     flask_thread = Thread(target=run_flask, daemon=True)
     flask_thread.start()
 
-    # Start Telegram Bot
+    # Start Telegram Bot (Open to All)
     try:
         bot.start()
-        print("✅ Bot is online.")
+        print("✅ Bot is online and accessible to everyone.")
     except Exception as e:
         print(f"❌ Bot startup failed: {e}")
 
